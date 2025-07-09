@@ -1,4 +1,5 @@
 streamlit
 markdown
 pdfkit
+pikepdf
 python-docx
