@@ -3,3 +3,4 @@ markdown
 pdfkit
 pikepdf
 python-docx
+wkhtmltopdf
