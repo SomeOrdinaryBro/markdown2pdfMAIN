@@ -1,56 +1,180 @@
 import streamlit as st
-from openai import OpenAI
+import markdown
+import pdfkit
+import tempfile
+import os
+import re
+from datetime import datetime
 
-# Show title and description.
-st.title("💬 Chatbot")
-st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
-)
+# --- Streamlit UI Setup ---
+st.set_page_config(page_title="Markdown to PDF Converter", page_icon="📄")
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
+LIGHT_THEME = """
+    <style>
+        body {
+            background-color: #f9f9f9;
+            color: #333333;
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 14px;
+        }
+        .reportview-container .markdown-text-container {
+            padding: 2rem;
+        }
+    </style>
+"""
+
+st.markdown("""
+    <div style="text-align:center; margin-bottom: 2rem">
+        <h1>📄 Markdown to PDF Converter</h1>
+    </div>
+""", unsafe_allow_html=True)
+
+st.markdown(LIGHT_THEME, unsafe_allow_html=True)
+
+# --- User Inputs ---
+md_source = st.radio("Choose Input Method", ["Upload .md file", "Write Markdown manually"])
+
+uploaded_filename = None
+if md_source == "Upload .md file":
+    uploaded_file = st.file_uploader("Upload a Markdown (.md) file", type="md")
+    if uploaded_file:
+        uploaded_filename = uploaded_file.name
+        md_content = uploaded_file.read().decode("utf-8")
+    else:
+        md_content = None
 else:
+    md_content = st.text_area("Write Markdown", height=300)
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+if md_content:
+    st.markdown("### Live Markdown Preview")
+    st.markdown(md_content)
 
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    st.markdown("---")
+    st.subheader("PDF Customization")
 
-    # Display the existing chat messages via `st.chat_message`.
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    # Font and Size
+    font = st.selectbox("Font Family", ["Arial", "Times New Roman", "Courier New", "Helvetica"])
+    font_size = st.slider("Font Size", 8, 20, 12)
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
+    # Theme
+    theme = st.selectbox("Style Theme", ["Default", "GitHub", "Notion", "Minimalist", "Dark"])
 
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    # Page Options
+    split_pages = st.checkbox("Start each H1 (#) on a new page")
+    page_numbers = st.checkbox("Add page numbers")
 
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
-        )
+    # Page Layout
+    paper_size = st.selectbox("Paper Size", ["A4", "Letter", "Legal"])
+    orientation = st.selectbox("Orientation", ["Portrait", "Landscape"])
 
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
-        with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+    # Header/Footer
+    header = st.text_input("Header (optional)")
+    footer = st.text_input("Footer (optional)")
+
+    # Watermark
+    watermark = st.text_input("Watermark Text (optional)")
+
+    # Optional HTML Export
+    save_html = st.checkbox("Also download HTML version")
+
+    # Table of Contents
+    add_toc = st.checkbox("Include Table of Contents")
+
+    # Live PDF Preview
+    show_preview = st.checkbox("Show live PDF preview before download")
+
+    if st.button("🔄 Convert to PDF"):
+        try:
+            html = markdown.markdown(md_content)
+
+            if add_toc:
+                toc_html = "<h2>Table of Contents</h2><ul>"
+                for line in md_content.splitlines():
+                    if line.startswith("#"):
+                        level = len(line.split(" ")[0])
+                        title = line[level+1:].strip()
+                        anchor = re.sub(r'[^a-zA-Z0-9]+', '-', title.lower())
+                        toc_html += f"<li style='margin-left:{(level-1)*20}px'><a href='#{anchor}'>{title}</a></li>"
+                        html = html.replace(f"<h{level}>" + title + f"</h{level}>", f"<h{level} id='{anchor}'>" + title + f"</h{level}>")
+                toc_html += "</ul>"
+                html = toc_html + html
+
+            styles = {
+                "Default": "",
+                "GitHub": "body { font-family: 'Segoe UI'; background: #fff; color: #24292e; } code { background: #f6f8fa; }",
+                "Notion": "body { font-family: 'sans-serif'; background: #fdfdfd; color: #37352f; } h1, h2, h3 { border-bottom: 1px solid #eee; }",
+                "Minimalist": "body { font-family: 'Georgia'; background: #fff; color: #000; line-height: 1.6; } h1, h2 { text-align: center; }",
+                "Dark": "body { background: #121212; color: #e0e0e0; font-family: 'Courier New'; }"
+            }
+
+            style = f"""
+            <style>
+                body {{
+                    font-size: {font_size}pt;
+                    {styles.get(theme, '')}
+                }}
+                h1 {{ page-break-before: {'always' if split_pages else 'auto'}; }}
+            </style>
+            """
+
+            watermark_html = f"<div style='position:fixed; top:45%; left:30%; font-size:48px; color:rgba(150,150,150,0.15); transform:rotate(-30deg); z-index:-1'>{watermark}</div>" if watermark else ""
+
+            final_html = f"<html><head>{style}</head><body>{watermark_html}{html}</body></html>"
+
+            match = re.match(r"# (.+)", md_content)
+            if match:
+                filename_base = match.group(1).strip().replace(" ", "_")
+            elif uploaded_filename:
+                filename_base = os.path.splitext(uploaded_filename)[0]
+            else:
+                filename_base = "converted_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            filename_pdf = f"{filename_base}.pdf"
+            filename_html = f"{filename_base}.html"
+
+            options = {
+                'quiet': '',
+                'enable-local-file-access': '',
+                'page-size': paper_size,
+                'orientation': orientation
+            }
+            if page_numbers:
+                options['footer-right'] = '[page]/[topage]'
+            if header:
+                options['header-center'] = header
+            if footer:
+                options['footer-center'] = footer
+
+            temp_files = []
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
+                pdfkit.from_string(final_html, tmp_pdf.name, options=options)
+                temp_files.append(tmp_pdf.name)
+
+                if show_preview:
+                    st.components.v1.iframe("file://" + tmp_pdf.name, height=600)
+
+                st.success("✅ PDF generated!")
+                with open(tmp_pdf.name, "rb") as f:
+                    st.download_button("Download PDF", f, file_name=filename_pdf)
+
+            if save_html:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp_html:
+                    tmp_html.write(final_html.encode("utf-8"))
+                    tmp_html.flush()
+                    temp_files.append(tmp_html.name)
+                    with open(tmp_html.name, "rb") as f:
+                        st.download_button("Download HTML", f, file_name=filename_html)
+
+        except Exception as e:
+            st.error(f"❌ Conversion failed: {e}")
+
+        for f in temp_files:
+            os.unlink(f)
+
+    st.markdown("""
+        <hr style="margin-top: 50px;">
+        <div style="text-align: center; color: grey;">
+            Made with ❤️ by <b>@SomeOrdinaryBro</b>
+        </div>
+    """, unsafe_allow_html=True)
