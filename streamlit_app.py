@@ -5,15 +5,13 @@ import tempfile
 import os
 import re
 from datetime import datetime
-from io import BytesIO
-from zipfile import ZipFile
-import python_docx as docx
+from docx import Document  # for docx export
+from pikepdf import Pdf  # for PDF compression
 
 # --- Streamlit UI Setup ---
 st.set_page_config(page_title="Markdown to PDF Converter", page_icon="📄")
 
-# Theme (Light/Dark Mode)
-light_theme = """
+LIGHT_THEME = """
     <style>
         body {
             background-color: #f9f9f9;
@@ -26,30 +24,6 @@ light_theme = """
         }
     </style>
 """
-
-dark_theme = """
-    <style>
-        body {
-            background-color: #121212;
-            color: #e0e0e0;
-            font-family: 'Courier New';
-            font-size: 14px;
-        }
-    </style>
-"""
-
-# Theme Toggle
-theme_toggle = st.checkbox("Enable Dark Mode", False)
-if theme_toggle:
-    st.markdown(dark_theme, unsafe_allow_html=True)
-else:
-    st.markdown(light_theme, unsafe_allow_html=True)
-
-st.markdown("""
-    <div style="text-align:center; margin-bottom: 2rem">
-        <h1>📄 Markdown to PDF Converter</h1>
-    </div>
-""", unsafe_allow_html=True)
 
 # --- User Inputs ---
 md_source = st.radio("Choose Input Method", ["Upload .md file", "Write Markdown manually"])
@@ -73,7 +47,7 @@ if md_content:
     st.subheader("PDF Customization")
 
     # Font and Size
-    font = st.selectbox("Font Family", ["Arial", "Times New Roman", "Courier New", "Helvetica", "Georgia", "Verdana"])
+    font = st.selectbox("Font Family", ["Arial", "Times New Roman", "Courier New", "Helvetica"])
     font_size = st.slider("Font Size", 8, 20, 12)
 
     # Theme
@@ -100,24 +74,23 @@ if md_content:
     # Table of Contents
     add_toc = st.checkbox("Include Table of Contents")
 
+    # Real-time Collaboration (Placeholder)
+    collaboration = st.checkbox("Enable real-time collaboration")  # This would require additional setup
+
+    # CSS-based Content Styling
+    custom_css = st.text_area("Custom CSS (optional)", height=100)
+
     # Live PDF Preview
     show_preview = st.checkbox("Show live PDF preview before download")
 
     # File Compression Option
-    compress_pdf = st.checkbox("Compress PDF after creation")
+    compress_pdf = st.checkbox("Compress PDF after generation")
 
-    # Downloadable Preview
-    download_preview = st.checkbox("Allow download of preview PDF")
-
-    # Font Upload
-    custom_font = st.file_uploader("Upload a custom font (TTF/OTF)", type=["ttf", "otf"])
-
-    # More Markdown Features (Table, Checkboxes, Blockquotes, etc.)
-    enable_advanced_markdown = st.checkbox("Enable advanced Markdown features")
+    # Export Options
+    export_docx = st.checkbox("Export as .docx")
 
     if st.button("🔄 Convert to PDF"):
         try:
-            # Markdown to HTML conversion
             html = markdown.markdown(md_content)
 
             if add_toc:
@@ -145,6 +118,7 @@ if md_content:
                 body {{
                     font-size: {font_size}pt;
                     {styles.get(theme, '')}
+                    {custom_css}
                 }}
                 h1 {{ page-break-before: {'always' if split_pages else 'auto'}; }}
             </style>
@@ -154,7 +128,6 @@ if md_content:
 
             final_html = f"<html><head>{style}</head><body>{watermark_html}{html}</body></html>"
 
-            # Filename logic
             match = re.match(r"# (.+)", md_content)
             if match:
                 filename_base = match.group(1).strip().replace(" ", "_")
@@ -165,6 +138,7 @@ if md_content:
 
             filename_pdf = f"{filename_base}.pdf"
             filename_html = f"{filename_base}.html"
+            filename_docx = f"{filename_base}.docx"
 
             options = {
                 'quiet': '',
@@ -181,25 +155,33 @@ if md_content:
 
             temp_files = []
 
-            # PDF generation
+            # Generate PDF
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
                 pdfkit.from_string(final_html, tmp_pdf.name, options=options)
                 temp_files.append(tmp_pdf.name)
 
-                # Preview PDF option
+                # Compress PDF
+                if compress_pdf:
+                    with open(tmp_pdf.name, 'rb') as original_file:
+                        with open(tmp_pdf.name, 'wb') as compressed_file:
+                            pdf = Pdf.open(original_file)
+                            pdf.save(compressed_file, compress_stream=True)
+
+                # Show preview
                 if show_preview:
                     st.components.v1.iframe("file://" + tmp_pdf.name, height=600)
-
-                # Allow download of preview PDF
-                if download_preview:
-                    with open(tmp_pdf.name, "rb") as f:
-                        st.download_button("Download Preview PDF", f, file_name=f"preview_{filename_pdf}")
 
                 st.success("✅ PDF generated!")
                 with open(tmp_pdf.name, "rb") as f:
                     st.download_button("Download PDF", f, file_name=filename_pdf)
 
-            # HTML version download
+            # Export .docx
+            if export_docx:
+                doc = Document()
+                doc.add_paragraph(md_content)
+                doc.save(filename_docx)
+                st.download_button("Download DOCX", filename_docx)
+
             if save_html:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp_html:
                     tmp_html.write(final_html.encode("utf-8"))
@@ -208,21 +190,15 @@ if md_content:
                     with open(tmp_html.name, "rb") as f:
                         st.download_button("Download HTML", f, file_name=filename_html)
 
-            # PDF Compression (Optional)
-            if compress_pdf:
-                st.success("✅ PDF compressed!")
-
         except Exception as e:
             st.error(f"❌ Conversion failed: {e}")
 
         for f in temp_files:
             os.unlink(f)
 
-    # Footer Information
     st.markdown("""
         <hr style="margin-top: 50px;">
         <div style="text-align: center; color: grey;">
             Made with ❤️ by <b>@SomeOrdinaryBro</b>
         </div>
     """, unsafe_allow_html=True)
-
